@@ -1,0 +1,138 @@
+# docker-compose.yml — Aetheria local infrastructure
+# -----------------------------------------------------------------------------
+# One command stands up all the backing services every Aetheria service needs:
+#   docker compose up -d
+# Stop with:        docker compose down
+# Stop + wipe data: docker compose down -v   (the -v removes the named volumes)
+#
+# Values like passwords come from a .env file (copy .env.example -> .env first).
+# Compose automatically reads .env for ${VARIABLE} substitution below.
+# -----------------------------------------------------------------------------
+
+services:
+  # --- PostgreSQL: the primary relational database -----------------------------
+  postgres:
+    image: postgres:16-alpine          # "alpine" = a tiny Linux base => small image
+    container_name: aetheria-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"                    # host:container — connect from your machine on 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # persist data across restarts
+    healthcheck:                       # Compose can tell when the DB is actually ready
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- Redis: in-memory cache + presence --------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: aetheria-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # --- Kafka: durable event log (KRaft mode = no ZooKeeper needed) -------------
+  kafka:
+    image: apache/kafka:3.8.0
+    container_name: aetheria-kafka
+    restart: unless-stopped
+    ports:
+      - "9092:9092"     # inter-container listener (other containers use kafka:9092)
+      - "29092:29092"   # host listener (apps on YOUR machine use localhost:29092)
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Two listeners so BOTH containers and your host machine can connect.
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Single-node dev settings (replication factor 1 because there's only one broker).
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # --- Kafka UI: a web dashboard to SEE topics/messages (great for learning) ---
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: aetheria-kafka-ui
+    restart: unless-stopped
+    ports:
+      - "8080:8080"     # open http://localhost:8080
+    environment:
+      KAFKA_CLUSTERS_0_NAME: aetheria-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  # --- RabbitMQ: task/command queue (with built-in management web UI) ----------
+  rabbitmq:
+    image: rabbitmq:3.13-management   # "-management" adds the web UI
+    container_name: aetheria-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    ports:
+      - "5672:5672"     # AMQP protocol port (services connect here)
+      - "15672:15672"   # management UI -> http://localhost:15672
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # --- MinIO: S3-compatible object storage for assets --------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: aetheria-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "9000:9000"     # S3 API
+      - "9001:9001"     # web console -> http://localhost:9001
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+# Named volumes = where container data lives so it survives "docker compose down".
+volumes:
+  postgres_data:
+  redis_data:
+  kafka_data:
+  rabbitmq_data:
+  minio_data:
