@@ -1,0 +1,6 @@
+# Normalize line endings across machines (Windows/Mac/Linux).
+# "text=auto" lets git store LF in the repo and check out the OS-native ending.
+* text=auto eol=lf
+
+# Shell scripts must stay LF even on Windows or they break in containers.
+*.sh text eol=lf
