@@ -119,8 +119,9 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     ports:
-      - "9000:9000"     # S3 API
-      - "9001:9001"     # web console -> http://localhost:9001
+      # Host 9000/9001 may already be taken by a native MinIO, so map to 9002/9003.
+      - "9002:9000"     # S3 API
+      - "9003:9001"     # web console -> http://localhost:9003
     volumes:
       - minio_data:/data
     healthcheck:
@@ -128,6 +129,44 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
+
+  # --- aetheria-auth: identity/auth service (built from the sibling repo) -------
+  auth:
+    build:
+      context: ../aetheria-auth   # requires aetheria-auth cloned next to this repo
+    container_name: aetheria-auth
+    restart: unless-stopped
+    environment:
+      # Inside the Docker network, reach Postgres by its SERVICE NAME, not localhost.
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      # The browser origin allowed by CORS (the web app, reached via the host).
+      APP_CORS_ALLOWED_ORIGINS: http://localhost:3000
+      SERVER_PORT: 8081
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8081/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # --- aetheria-web: Next.js front end (built from the sibling repo) ------------
+  web:
+    build:
+      context: ../aetheria-web    # requires aetheria-web cloned next to this repo
+    container_name: aetheria-web
+    restart: unless-stopped
+    # NEXT_PUBLIC_AUTH_URL defaults to http://localhost:8081 in the app code — correct
+    # because the BROWSER (on the host) calls auth via the mapped port, not the network.
+    ports:
+      - "3000:3000"
+    depends_on:
+      - auth
 
 # Named volumes = where container data lives so it survives "docker compose down".
 volumes:

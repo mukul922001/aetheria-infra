@@ -15,7 +15,19 @@ service the other Aetheria services depend on, using **Docker Compose**.
 | **Kafka** | Durable event log / streaming backbone | `29092` (host), `9092` (containers) | via Kafka UI |
 | **Kafka UI** | Dashboard to inspect Kafka topics/messages | `8080` | http://localhost:8080 |
 | **RabbitMQ** | Task/command message queue | `5672` (AMQP) | http://localhost:15672 |
-| **MinIO** | S3-compatible object storage (files/blobs) | `9000` (API) | http://localhost:9001 |
+| **MinIO** | S3-compatible object storage (files/blobs) | `9002` (API) | http://localhost:9003 |
+| **auth** | Identity/auth service (built from `../aetheria-auth`) | `8081` | http://localhost:8081/actuator/health |
+| **web** | Next.js front end (built from `../aetheria-web`) | `3000` | http://localhost:3000 |
+
+> **Full stack:** `docker compose up` now builds and runs the whole application, not just
+> the backing services. The `auth` and `web` images build from **sibling repos**, so clone them
+> next to this one:
+> ```
+> <parent>/aetheria-infra   (this repo)
+> <parent>/aetheria-auth
+> <parent>/aetheria-web
+> ```
+> Then `docker compose up --build` → open http://localhost:3000/login.
 
 ## Prerequisites
 - Docker Desktop (Docker Engine + Compose v2). Check: `docker --version`.
